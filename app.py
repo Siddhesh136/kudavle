@@ -183,7 +183,7 @@ st.divider()
 left, right = st.columns(2, gap="large")
 
 with left:
-    st.subheader("👔 Current Profession")
+    st.subheader("👔 Profession Overview")
     profession_counts = (
         filtered[profession_col]
         .dropna()
@@ -274,25 +274,25 @@ with right:
         
 # Cross-analysis
 st.divider()
-st.subheader("Profession × Station / Place")
-cross = filtered.dropna(subset=[profession_col, station_col])
-if not cross.empty:
-    cross_tab = pd.crosstab(
-        cross[profession_col],
-        cross[station_col],
-    )
-    fig = px.imshow(
-        cross_tab,
-        labels=dict(x="Current Station / Place", y="Current Profession", color="Records"),
-        aspect="auto",
-        title="Heatmap of profession by station / place",
-        text_auto=True,
-        color_continuous_scale="Blues",
-    )
-    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("No rows have both profession and station/place values.")
+# st.subheader("Profession × Station / Place")
+# cross = filtered.dropna(subset=[profession_col, station_col])
+# if not cross.empty:
+#     cross_tab = pd.crosstab(
+#         cross[profession_col],
+#         cross[station_col],
+#     )
+#     fig = px.imshow(
+#         cross_tab,
+#         labels=dict(x="Current Station / Place", y="Current Profession", color="Records"),
+#         aspect="auto",
+#         title="Heatmap of profession by station / place",
+#         text_auto=True,
+#         color_continuous_scale="Blues",
+#     )
+#     fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+#     st.plotly_chart(fig, use_container_width=True)
+# else:
+#     st.info("No rows have both profession and station/place values.")
 
 # ============================================================
 # Filtered records and export

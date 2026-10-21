@@ -14,7 +14,7 @@ PROFESSION_COL = "Current Profession (सध्याचे नोकरी/प�
 STATION_COL = "Current Station/Place"
 
 st.set_page_config(
-    page_title="Profession & Station Dashboard",
+    page_title="Kudavle Professionals Dashboard",
     page_icon="📊",
     layout="wide",
 )
@@ -74,7 +74,7 @@ def resolve_column(columns, preferred_name):
 # ============================================================
 head, refresh_col = st.columns([5, 1])
 with head:
-    st.title("📊 Profession & Current Station Dashboard")
+    st.title("📊 Kudavle Professionals Dashboard")
     st.caption(
         "Explore the distribution of current professions and places/stations "
         "from your Google Sheet."

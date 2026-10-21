@@ -1,341 +1,314 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from urllib.parse import urlsplit, urlunsplit
 
-# --------------------------------------------------
-# Page configuration
-# --------------------------------------------------
-st.set_page_config(
-    page_title="Google Sheets Analytics Dashboard",
-    page_icon="📊",
-    layout="wide",
-)
-
-st.title("📊 Google Sheets Analytics Dashboard")
-st.caption("Live data dashboard powered by Google Sheets, pandas and Plotly")
-
-# --------------------------------------------------
-# Google Sheet configuration
-# --------------------------------------------------
+# ============================================================
+# Google Sheets source
+# ============================================================
 SHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "130S21b85odR4TOI0uoGpBKJBQtN20KLl8118hjllR1Q/edit?usp=sharing"
 )
 
+PROFESSION_COL = "Current Profession (सध्याचे नोकरी/पद्)"
+STATION_COL = "Current Station/Place"
+
+st.set_page_config(
+    page_title="Profession & Station Dashboard",
+    page_icon="📊",
+    layout="wide",
+)
+
+st.markdown(
+    """
+    <style>
+      .block-container {padding-top: 1.5rem; padding-bottom: 2rem;}
+      div[data-testid="stMetric"] {
+        background: var(--secondary-background-color);
+        border: 1px solid rgba(128,128,128,.18);
+        padding: 16px 18px;
+        border-radius: 14px;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def make_csv_url(url: str) -> str:
-    """Convert a standard Google Sheets URL to its CSV export URL."""
-    url = url.split("#")[0]
-    url = url.replace("/edit?usp=sharing", "/gviz/tq?tqx=out:csv")
-
-    # Also support common Google Sheets URL variants.
-    if "/edit" in url:
-        url = url.split("/edit")[0] + "/gviz/tq?tqx=out:csv"
-
-    return url
+    """Convert the Google Sheets share URL to its GViz CSV export URL."""
+    base = url.split("#", 1)[0]
+    if "/edit" in base:
+        base = base.split("/edit", 1)[0]
+    return f"{base}/gviz/tq?tqx=out:csv"
 
 
-# --------------------------------------------------
-# Data loading and caching
-# --------------------------------------------------
-@st.cache_data(ttl=300, show_spinner="Loading Google Sheets data...")
-def load_data(sheet_url: str) -> pd.DataFrame:
-    """Read the published/shared Google Sheet CSV into a DataFrame."""
-    csv_url = make_csv_url(sheet_url)
-
+@st.cache_data(ttl=300, show_spinner="Loading the latest Google Sheets data…")
+def load_data(csv_url: str) -> pd.DataFrame:
     df = pd.read_csv(csv_url)
-
-    # Normalize column headers.
     df.columns = df.columns.astype(str).str.strip()
-
-    # Remove completely empty rows and columns.
     df = df.dropna(how="all").dropna(axis=1, how="all")
-
-    # Convert text that looks numeric to numeric data.
-    for col in df.columns:
-        if df[col].dtype == "object":
-            cleaned = df[col].astype("string").str.strip()
-            numeric = pd.to_numeric(
-                cleaned.str.replace(",", "", regex=False),
-                errors="coerce",
-            )
-            if numeric.notna().sum() > 0 and numeric.notna().mean() >= 0.8:
-                df[col] = numeric
-
     return df
 
 
-# --------------------------------------------------
-# Refresh button
-# --------------------------------------------------
-if st.button("🔄 Refresh Data"):
-    st.cache_data.clear()
-    st.rerun()
+def resolve_column(columns, preferred_name):
+    """Find exact column first; otherwise match normalized header text."""
+    if preferred_name in columns:
+        return preferred_name
+    normalize = lambda s: " ".join(str(s).strip().lower().split())
+    target = normalize(preferred_name)
+    matches = [c for c in columns if normalize(c) == target]
+    if matches:
+        return matches[0]
+    # Fallback supports small differences in punctuation/spacing.
+    target_compact = "".join(ch for ch in target if ch.isalnum())
+    for col in columns:
+        compact = "".join(ch for ch in normalize(col) if ch.isalnum())
+        if compact == target_compact:
+            return col
+    return None
 
-# --------------------------------------------------
-# Load data safely
-# --------------------------------------------------
+
+# ============================================================
+# Header and refresh
+# ============================================================
+head, refresh_col = st.columns([5, 1])
+with head:
+    st.title("📊 Profession & Current Station Dashboard")
+    st.caption(
+        "Explore the distribution of current professions and places/stations "
+        "from your Google Sheet."
+    )
+with refresh_col:
+    st.write("")
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
 try:
-    df = load_data(SHEET_URL)
-
-    if df.empty:
-        st.warning(
-            "The sheet returned no data. Check that the correct worksheet "
-            "contains data and that the sheet is accessible."
-        )
-        st.stop()
-
+    df = load_data(make_csv_url(SHEET_URL))
 except Exception as exc:
     st.error(
-        "Could not load the Google Sheet. Make sure the spreadsheet is "
-        "shared with access appropriate for CSV export, and check the URL "
-        "and worksheet permissions."
+        "Could not load the Google Sheet. Confirm that the sheet is accessible "
+        "through CSV export (for example, shared as Anyone with the link — Viewer)."
     )
     with st.expander("Technical details"):
         st.code(str(exc))
+    st.link_button("Open Google Sheet", SHEET_URL)
     st.stop()
 
-# --------------------------------------------------
-# Identify columns
-# --------------------------------------------------
-all_columns = df.columns.tolist()
+if df.empty:
+    st.warning("The Google Sheet returned no data.")
+    st.stop()
 
-numeric_columns = df.select_dtypes(include="number").columns.tolist()
+profession_col = resolve_column(df.columns, PROFESSION_COL)
+station_col = resolve_column(df.columns, STATION_COL)
 
-date_columns = []
-for col in all_columns:
-    if col in numeric_columns:
-        continue
+missing = []
+if profession_col is None:
+    missing.append(PROFESSION_COL)
+if station_col is None:
+    missing.append(STATION_COL)
 
-    parsed = pd.to_datetime(df[col], errors="coerce")
-    if len(df) > 0 and parsed.notna().mean() >= 0.8:
-        date_columns.append(col)
+if missing:
+    st.error("Could not find the following expected column(s) in the sheet:")
+    for name in missing:
+        st.write(f"- `{name}`")
+    st.write("Available columns:")
+    st.code("\n".join(map(str, df.columns)))
+    st.info(
+        "Update PROFESSION_COL or STATION_COL near the top of app.py to match "
+        "the exact header text in your worksheet."
+    )
+    st.stop()
 
-categorical_columns = [
-    col for col in all_columns
-    if col not in numeric_columns and col not in date_columns
-]
+# Treat blank values consistently in filters and charts.
+data = df.copy()
+for col in [profession_col, station_col]:
+    data[col] = data[col].astype("string").str.strip()
+    data[col] = data[col].replace("", pd.NA)
 
-# --------------------------------------------------
+# ============================================================
 # Sidebar filters
-# --------------------------------------------------
-st.sidebar.header("🔎 Dashboard Filters")
+# ============================================================
+st.sidebar.header("🔎 Filters")
 
-filter_options = ["All data"] + categorical_columns
-filter_column = st.sidebar.selectbox(
-    "Filter by column",
-    options=filter_options,
+profession_options = sorted(data[profession_col].dropna().unique().tolist(), key=str.casefold)
+station_options = sorted(data[station_col].dropna().unique().tolist(), key=str.casefold)
+
+selected_professions = st.sidebar.multiselect(
+    "Current Profession (सध्याचे नोकरी/पद्)",
+    options=profession_options,
+    default=[],
+    placeholder="All professions",
+)
+selected_stations = st.sidebar.multiselect(
+    "Current Station/Place",
+    options=station_options,
+    default=[],
+    placeholder="All stations/places",
 )
 
-filtered_df = df.copy()
-
-if filter_column != "All data":
-    values = (
-        filtered_df[filter_column]
-        .dropna()
-        .astype(str)
-        .sort_values()
-        .unique()
-        .tolist()
-    )
-
-    selected_values = st.sidebar.multiselect(
-        f"Select {filter_column}",
-        options=values,
-        default=values,
-    )
-
-    # If nothing is selected, show no rows rather than all rows.
-    if selected_values:
-        filtered_df = filtered_df[
-            filtered_df[filter_column].astype(str).isin(selected_values)
-        ]
-    else:
-        filtered_df = filtered_df.iloc[0:0]
+filtered = data.copy()
+if selected_professions:
+    filtered = filtered[filtered[profession_col].isin(selected_professions)]
+if selected_stations:
+    filtered = filtered[filtered[station_col].isin(selected_stations)]
 
 st.sidebar.divider()
-st.sidebar.caption(f"Rows in source: {len(df):,}")
-st.sidebar.caption(f"Rows after filtering: {len(filtered_df):,}")
+st.sidebar.caption(f"Source records: {len(data):,}")
+st.sidebar.caption(f"Filtered records: {len(filtered):,}")
+st.sidebar.caption("No selection means all values.")
 
-# --------------------------------------------------
-# KPI metrics
-# --------------------------------------------------
-st.subheader("Key Metrics")
-
-kpi1, kpi2, kpi3 = st.columns(3)
-
-with kpi1:
-    st.metric("Total Records", f"{len(filtered_df):,}")
-
-with kpi2:
-    st.metric("Total Columns", f"{len(all_columns):,}")
-
-with kpi3:
-    if numeric_columns:
-        default_metric = numeric_columns[0]
-        metric_col = st.selectbox(
-            "Metric column",
-            options=numeric_columns,
-            index=0,
-            key="kpi_metric_column",
-        )
-        metric_total = filtered_df[metric_col].sum()
-        st.metric(
-            f"Total {metric_col}",
-            f"{metric_total:,.2f}",
-        )
-    else:
-        st.metric("Non-empty Cells", f"{filtered_df.notna().sum().sum():,}")
+# ============================================================
+# KPI summary
+# ============================================================
+st.subheader("Overview")
+k1, k2, k3 = st.columns(3)
+k1.metric("Filtered Records", f"{len(filtered):,}")
+k2.metric(
+    "Unique Professions",
+    f"{filtered[profession_col].nunique(dropna=True):,}",
+)
+k3.metric(
+    "Unique Stations / Places",
+    f"{filtered[station_col].nunique(dropna=True):,}",
+)
 
 st.divider()
 
-# --------------------------------------------------
-# Interactive charts
-# --------------------------------------------------
-st.subheader("Interactive Analysis")
+# ============================================================
+# Charts
+# ============================================================
+left, right = st.columns(2, gap="large")
 
-chart_left, chart_right = st.columns(2)
-
-# Chart 1: Line chart
-with chart_left:
-    st.markdown("#### 📈 Trend Analysis")
-
-    if numeric_columns and (date_columns or categorical_columns):
-        x_candidates = date_columns + categorical_columns
-
-        x_col = st.selectbox(
-            "X-axis",
-            options=x_candidates,
-            key="line_x",
+with left:
+    st.subheader("👔 Current Profession")
+    profession_counts = (
+        filtered[profession_col]
+        .dropna()
+        .value_counts()
+        .rename_axis("Profession")
+        .reset_index(name="People / Records")
+    )
+    if not profession_counts.empty:
+        chart_type = st.radio(
+            "Profession chart style",
+            ["Bar chart", "Donut chart"],
+            horizontal=True,
+            key="profession_chart_type",
         )
-
-        y_col = st.selectbox(
-            "Value",
-            options=numeric_columns,
-            key="line_y",
-        )
-
-        plot_df = filtered_df.copy()
-
-        if x_col in date_columns:
-            plot_df[x_col] = pd.to_datetime(
-                plot_df[x_col], errors="coerce"
-            )
-
-        plot_df = plot_df.dropna(subset=[x_col, y_col])
-
-        if not plot_df.empty:
-            # Aggregate duplicate dates/categories for a readable trend.
-            line_df = (
-                plot_df.groupby(x_col, as_index=False)[y_col]
-                .sum()
-                .sort_values(x_col)
-            )
-
-            fig_line = px.line(
-                line_df,
-                x=x_col,
-                y=y_col,
-                markers=True,
-                title=f"{y_col} by {x_col}",
+        if chart_type == "Bar chart":
+            fig = px.bar(
+                profession_counts.sort_values("People / Records"),
+                x="People / Records",
+                y="Profession",
+                orientation="h",
+                text="People / Records",
+                title="Records by current profession",
                 template="plotly_white",
             )
-            fig_line.update_layout(
-                margin=dict(l=10, r=10, t=55, b=10),
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig_line, use_container_width=True)
         else:
-            st.info("No usable data for the selected line chart.")
+            fig = px.pie(
+                profession_counts,
+                names="Profession",
+                values="People / Records",
+                hole=0.48,
+                title="Profession distribution",
+                template="plotly_white",
+            )
+        fig.update_layout(margin=dict(l=10, r=10, t=55, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+        with st.expander("Profession count table"):
+            st.dataframe(profession_counts, use_container_width=True, hide_index=True)
     else:
-        st.info(
-            "A line chart requires at least one numeric column and one "
-            "date or category column."
-        )
+        st.info("No profession values match the selected filters.")
 
-# Chart 2: Bar chart
-with chart_right:
-    st.markdown("#### 📊 Category Comparison")
-
-    if numeric_columns and categorical_columns:
-        bar_x = st.selectbox(
-            "Category",
-            options=categorical_columns,
-            key="bar_x",
-        )
-
-        bar_y = st.selectbox(
-            "Measure",
-            options=numeric_columns,
-            key="bar_y",
-        )
-
+with right:
+    st.subheader("📍 Current Station / Place")
+    station_counts = (
+        filtered[station_col]
+        .dropna()
+        .value_counts()
+        .rename_axis("Station / Place")
+        .reset_index(name="People / Records")
+    )
+    if not station_counts.empty:
         top_n = st.slider(
-            "Number of categories",
+            "Number of stations / places to display",
             min_value=3,
-            max_value=20,
-            value=10,
-            key="bar_top_n",
+            max_value=max(3, min(30, len(station_counts))),
+            value=min(10, max(3, len(station_counts))),
+            key="station_top_n",
         )
-
-        plot_df = filtered_df.dropna(subset=[bar_x, bar_y]).copy()
-        plot_df[bar_x] = plot_df[bar_x].astype(str)
-
-        bar_df = (
-            plot_df.groupby(bar_x, as_index=False)[bar_y]
-            .sum()
-            .sort_values(bar_y, ascending=False)
-            .head(top_n)
+        shown_stations = station_counts.head(top_n)
+        station_chart_type = st.radio(
+            "Station chart style",
+            ["Bar chart", "Donut chart"],
+            horizontal=True,
+            key="station_chart_type",
         )
-
-        if not bar_df.empty:
-            fig_bar = px.bar(
-                bar_df,
-                x=bar_x,
-                y=bar_y,
-                title=f"{bar_y} by {bar_x}",
+        if station_chart_type == "Bar chart":
+            fig = px.bar(
+                shown_stations.sort_values("People / Records"),
+                x="People / Records",
+                y="Station / Place",
+                orientation="h",
+                text="People / Records",
+                title=f"Top {len(shown_stations)} stations / places",
                 template="plotly_white",
-                text_auto=".3s",
             )
-            fig_bar.update_layout(
-                margin=dict(l=10, r=10, t=55, b=10),
-                xaxis_title=bar_x,
-                yaxis_title=bar_y,
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.info("No usable data for the selected bar chart.")
+            fig = px.pie(
+                shown_stations,
+                names="Station / Place",
+                values="People / Records",
+                hole=0.48,
+                title=f"Station / place distribution (top {len(shown_stations)})",
+                template="plotly_white",
+            )
+        fig.update_layout(margin=dict(l=10, r=10, t=55, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+        with st.expander("Station / place count table"):
+            st.dataframe(station_counts, use_container_width=True, hide_index=True)
     else:
-        st.info(
-            "A bar chart requires at least one numeric column and one "
-            "categorical column."
-        )
+        st.info("No station/place values match the selected filters.")
 
-# --------------------------------------------------
-# Data table
-# --------------------------------------------------
+# Cross-analysis
 st.divider()
-st.subheader("📋 Filtered Data")
+st.subheader("Profession × Station / Place")
+cross = filtered.dropna(subset=[profession_col, station_col])
+if not cross.empty:
+    cross_tab = pd.crosstab(
+        cross[profession_col],
+        cross[station_col],
+    )
+    fig = px.imshow(
+        cross_tab,
+        labels=dict(x="Current Station / Place", y="Current Profession", color="Records"),
+        aspect="auto",
+        title="Heatmap of profession by station / place",
+        text_auto=True,
+        color_continuous_scale="Blues",
+    )
+    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No rows have both profession and station/place values.")
 
-st.caption(
-    f"Showing {len(filtered_df):,} of {len(df):,} source rows."
-)
-
-st.dataframe(
-    filtered_df,
-    use_container_width=True,
-    hide_index=True,
-)
-
-csv_data = filtered_df.to_csv(index=False).encode("utf-8")
+# ============================================================
+# Filtered records and export
+# ============================================================
+st.divider()
+st.subheader("📋 Filtered Records")
+st.caption(f"Showing {len(filtered):,} of {len(data):,} source rows.")
+st.dataframe(filtered, use_container_width=True, hide_index=True)
 
 st.download_button(
-    label="⬇️ Download filtered data as CSV",
-    data=csv_data,
-    file_name="filtered_google_sheet_data.csv",
+    "⬇️ Download filtered records (CSV)",
+    data=filtered.to_csv(index=False).encode("utf-8-sig"),
+    file_name="profession_station_filtered.csv",
     mime="text/csv",
 )
 
-st.caption("Data is cached for up to 5 minutes. Use Refresh Data to reload it.")
+st.caption("Data is cached for up to 5 minutes. Use Refresh Data to fetch the sheet again.")

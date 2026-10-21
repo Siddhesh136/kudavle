@@ -225,7 +225,8 @@ with left:
         st.info("No profession values match the selected filters.")
 
 with right:
-    st.subheader("📍 Current Station / Place")
+    st.subheader("📍 Place overview")
+
     station_counts = (
         filtered[station_col]
         .dropna()
@@ -233,47 +234,44 @@ with right:
         .rename_axis("Station / Place")
         .reset_index(name="People / Records")
     )
+
     if not station_counts.empty:
-        top_n = st.slider(
-            "Number of stations / places to display",
-            min_value=3,
-            max_value=max(3, min(30, len(station_counts))),
-            value=min(10, max(3, len(station_counts))),
-            key="station_top_n",
+        fig = px.pie(
+            station_counts,
+            names="Station / Place",
+            values="People / Records",
+            hole=0.0,
+            title="Distribution by Current Station / Place",
+            template="plotly_white",
         )
-        shown_stations = station_counts.head(top_n)
-        station_chart_type = st.radio(
-            "Station chart style",
-            ["Bar chart", "Donut chart"],
-            horizontal=True,
-            key="station_chart_type",
+
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            hovertemplate=(
+                "<b>%{label}</b><br>"
+                "Records: %{value}<br>"
+                "Share: %{percent}"
+                "<extra></extra>"
+            ),
         )
-        if station_chart_type == "Bar chart":
-            fig = px.bar(
-                shown_stations.sort_values("People / Records"),
-                x="People / Records",
-                y="Station / Place",
-                orientation="h",
-                text="People / Records",
-                title=f"Top {len(shown_stations)} stations / places",
-                template="plotly_white",
-            )
-        else:
-            fig = px.pie(
-                shown_stations,
-                names="Station / Place",
-                values="People / Records",
-                hole=0.48,
-                title=f"Station / place distribution (top {len(shown_stations)})",
-                template="plotly_white",
-            )
-        fig.update_layout(margin=dict(l=10, r=10, t=55, b=10))
+
+        fig.update_layout(
+            margin=dict(l=10, r=10, t=55, b=10),
+            legend_title_text="Station / Place",
+        )
+
         st.plotly_chart(fig, use_container_width=True)
-        with st.expander("Station / place count table"):
-            st.dataframe(station_counts, use_container_width=True, hide_index=True)
+
+        with st.expander("Place count details"):
+            st.dataframe(
+                station_counts,
+                use_container_width=True,
+                hide_index=True,
+            )
     else:
         st.info("No station/place values match the selected filters.")
-
+        
 # Cross-analysis
 st.divider()
 st.subheader("Profession × Station / Place")
